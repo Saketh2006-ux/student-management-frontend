@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
 import "./App.css";
-
 const API_URL = "https://student-management-backend-1v2c.onrender.com/api/students";
-
 function App() {
   // =========================
   // LOGIN
