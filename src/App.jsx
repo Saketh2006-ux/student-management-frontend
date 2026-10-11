@@ -36,6 +36,10 @@ function App() {
   // =========================
 
   const [searchTerm, setSearchTerm] = useState("");
+  const [sortBy, setSortBy] = useState("id");
+  const [sortOrder, setSortOrder] = useState("asc");
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
 
   // =========================
   // FORM
@@ -43,6 +47,8 @@ function App() {
 
   const [showStudentForm, setShowStudentForm] = useState(false);
   const [editingStudent, setEditingStudent] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
 
   const [formData, setFormData] = useState({
     name: "",
@@ -178,6 +184,7 @@ function App() {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
+    setFormError("");
 
     setFormData((previous) => ({
       ...previous,
@@ -186,21 +193,59 @@ function App() {
   };
 
   // =========================
+  // FORM VALIDATION
+  // =========================
+
+  const validateStudentForm = () => {
+    const name = formData.name.trim();
+    const email = formData.email.trim();
+    const course = formData.course.trim();
+    const age = Number(formData.age);
+    const marks = Number(formData.marks);
+
+    if (!name) return "Please enter the student's name.";
+    if (name.length < 2) return "Name must contain at least 2 characters.";
+    if (!/^[\\p{L}][\\p{L} .'-]*$/u.test(name)) {
+      return "Name may contain letters, spaces, apostrophes, periods, or hyphens.";
+    }
+    if (!email) return "Please enter an email address.";
+    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email)) {
+      return "Please enter a valid email address.";
+    }
+    if (!course) return "Please select a course.";
+    if (formData.age === "" || !Number.isFinite(age) || age < 1 || age > 100) {
+      return "Age must be a number between 1 and 100.";
+    }
+    if (formData.marks === "" || !Number.isFinite(marks) || marks < 0 || marks > 100) {
+      return "Marks must be a number between 0 and 100.";
+    }
+    return "";
+  };
+
+  // =========================
   // ADD STUDENT
   // =========================
 
   const handleAddStudent = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
+    const validationError = validateStudentForm();
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
+
+    setFormError("");
+    setIsSubmitting(true);
 
     try {
       const response = await fetch(API_URL, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: formData.name,
-          email: formData.email,
+          name: formData.name.trim(),
+          email: formData.email.trim(),
           course: formData.course,
           age: Number(formData.age),
           marks: Number(formData.marks),
@@ -208,26 +253,21 @@ function App() {
       });
 
       if (!response.ok) {
-        throw new Error();
+        const details = await response.text().catch(() => "");
+        throw new Error(details || "Failed to add student.");
       }
 
       alert("Student added successfully!");
-
-      setFormData({
-        name: "",
-        email: "",
-        course: "",
-        age: "",
-        marks: "",
-      });
-
+      setFormData({ name: "", email: "", course: "", age: "", marks: "" });
+      setFormError("");
       setShowStudentForm(false);
       setEditingStudent(null);
       setActivePage("students");
-
-      loadStudents();
-    } catch {
-      alert("Failed to add student. Check the backend.");
+      await loadStudents();
+    } catch (err) {
+      setFormError(err.message || "Failed to add student. Check the backend.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -256,38 +296,45 @@ function App() {
 
   const handleUpdateStudent = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
+    const validationError = validateStudentForm();
+    if (validationError) {
+      setFormError(validationError);
+      return;
+    }
+
+    setFormError("");
+    setIsSubmitting(true);
 
     try {
-      const response = await fetch(
-        `${API_URL}/${editingStudent.id}`,
-        {
-          method: "PUT",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            name: formData.name,
-            email: formData.email,
-            course: formData.course,
-            age: Number(formData.age),
-            marks: Number(formData.marks),
-          }),
-        }
-      );
+      const response = await fetch(`${API_URL}/${editingStudent.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: formData.name.trim(),
+          email: formData.email.trim(),
+          course: formData.course,
+          age: Number(formData.age),
+          marks: Number(formData.marks),
+        }),
+      });
 
       if (!response.ok) {
-        throw new Error();
+        const details = await response.text().catch(() => "");
+        throw new Error(details || "Failed to update student.");
       }
 
       alert("Student updated successfully!");
-
+      setFormError("");
       setShowStudentForm(false);
       setEditingStudent(null);
       setActivePage("students");
-
-      loadStudents();
-    } catch {
-      alert("Failed to update student.");
+      await loadStudents();
+    } catch (err) {
+      setFormError(err.message || "Failed to update student.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -344,14 +391,113 @@ function App() {
   // =========================
 
   const filteredStudents = students.filter((student) => {
-    const search = searchTerm.toLowerCase();
+    const search = searchTerm.trim().toLowerCase();
 
     return (
-      student.name.toLowerCase().includes(search) ||
-      student.email.toLowerCase().includes(search) ||
-      student.course.toLowerCase().includes(search)
+      String(student.name ?? "").toLowerCase().includes(search) ||
+      String(student.email ?? "").toLowerCase().includes(search) ||
+      String(student.course ?? "").toLowerCase().includes(search)
     );
   });
+
+  const sortedStudents = [...filteredStudents].sort((a, b) => {
+    let comparison;
+
+    if (["id", "age", "marks"].includes(sortBy)) {
+      comparison = Number(a[sortBy] ?? 0) - Number(b[sortBy] ?? 0);
+    } else {
+      comparison = String(a[sortBy] ?? "").localeCompare(
+        String(b[sortBy] ?? ""),
+        undefined,
+        { sensitivity: "base" }
+      );
+    }
+
+    return sortOrder === "asc" ? comparison : -comparison;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(sortedStudents.length / pageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const paginatedStudents = sortedStudents.slice(
+    (safeCurrentPage - 1) * pageSize,
+    safeCurrentPage * pageSize
+  );
+
+  const changeSort = (field) => {
+    if (sortBy === field) {
+      setSortOrder((order) => (order === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(field);
+      setSortOrder("asc");
+    }
+    setCurrentPage(1);
+  };
+
+  // =========================
+  // EXPORT STUDENT RECORDS
+  // =========================
+
+  const getExportRows = () => sortedStudents.map((student) => ({
+    ID: student.id,
+    Name: student.name,
+    Email: student.email,
+    Course: student.course,
+    Age: student.age,
+    Marks: student.marks,
+    Status: Number(student.marks) >= 50 ? "Passed" : "Failed",
+  }));
+
+  const downloadBlob = (blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportToCSV = () => {
+    const rows = getExportRows();
+    const headers = ["ID", "Name", "Email", "Course", "Age", "Marks", "Status"];
+    const escapeCSV = (value) => {
+      const text = String(value ?? "");
+      // Prevent spreadsheet formula injection for text fields.
+      const safeText = /^[=+@\\-\\t\\r]/.test(text) ? `'${text}` : text;
+      return `"${safeText.replace(/"/g, '""')}"`;
+    };
+    const csv = [
+      headers.map(escapeCSV).join(","),
+      ...rows.map((row) => headers.map((header) => escapeCSV(row[header])).join(",")),
+    ].join("\r\n");
+    const blob = new Blob(["\\uFEFF", csv], {
+      type: "text/csv;charset=utf-8;",
+    });
+    downloadBlob(blob, "student-records.csv");
+  };
+
+  const exportToExcel = async () => {
+    try {
+      const XLSX = await import("xlsx");
+      const worksheet = XLSX.utils.json_to_sheet(getExportRows());
+      worksheet["!cols"] = [
+        { wch: 8 },
+        { wch: 24 },
+        { wch: 32 },
+        { wch: 26 },
+        { wch: 10 },
+        { wch: 12 },
+        { wch: 12 },
+      ];
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, "Students");
+      XLSX.writeFile(workbook, "student-records.xlsx");
+    } catch (err) {
+      console.error("Excel export failed:", err);
+      alert("Excel export needs the xlsx package. Install it in the frontend folder using: npm install xlsx");
+    }
+  };
 
   // =========================
   // DASHBOARD CALCULATIONS
@@ -369,16 +515,18 @@ function App() {
         ).toFixed(2)
       : "0.00";
 
-  const highestMarks =
-    totalStudents > 0
-      ? Math.max(
-          ...students.map((student) => Number(student.marks))
+  const topPerformer =
+    students.length > 0
+      ? students.reduce((top, student) =>
+          Number(student.marks) > Number(top.marks)
+            ? student
+            : top
         )
-      : 0;
+      : null;
 
-  const dataScienceStudents = students.filter(
-    (student) => student.course === "Data Science"
-  ).length;
+  const coursesOffered = new Set(
+    students.map((student) => student.course)
+  ).size;
 
   // =========================
   // LOGIN PAGE
@@ -814,12 +962,18 @@ function App() {
                 <div>
 
                   <h3>
-                    Highest Marks
+                    Top Performer
                   </h3>
 
                   <h2>
-                    {highestMarks}
+                    {topPerformer ? topPerformer.name : "N/A"}
                   </h2>
+
+                  <p>
+                    {topPerformer
+                      ? `${topPerformer.marks} marks`
+                      : "No records yet"}
+                  </p>
 
                 </div>
 
@@ -834,11 +988,11 @@ function App() {
                 <div>
 
                   <h3>
-                    Data Science Students
+                    Courses Offered
                   </h3>
 
                   <h2>
-                    {dataScienceStudents}
+                    {coursesOffered}
                   </h2>
 
                 </div>
@@ -848,7 +1002,21 @@ function App() {
             </div>
 
             <StudentTable
-              students={students}
+              students={paginatedStudents}
+              totalFiltered={sortedStudents.length}
+              sortBy={sortBy}
+              sortOrder={sortOrder}
+              onSort={changeSort}
+              pageSize={pageSize}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setCurrentPage(1);
+              }}
+              currentPage={safeCurrentPage}
+              totalPages={totalPages}
+              onPageChange={setCurrentPage}
+              onExportCSV={exportToCSV}
+              onExportExcel={exportToExcel}
               onEdit={handleEditClick}
               onDelete={handleDeleteStudent}
               onAdd={goToAddStudent}
@@ -866,7 +1034,21 @@ function App() {
             />
 
             <StudentTable
-              students={students}
+              students={paginatedStudents}
+              totalFiltered={sortedStudents.length}
+              sortBy={sortBy}
+              sortOrder={sortOrder}
+              onSort={changeSort}
+              pageSize={pageSize}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setCurrentPage(1);
+              }}
+              currentPage={safeCurrentPage}
+              totalPages={totalPages}
+              onPageChange={setCurrentPage}
+              onExportCSV={exportToCSV}
+              onExportExcel={exportToExcel}
               onEdit={handleEditClick}
               onDelete={handleDeleteStudent}
               onAdd={goToAddStudent}
@@ -893,9 +1075,10 @@ function App() {
                 type="text"
                 placeholder="Search students..."
                 value={searchTerm}
-                onChange={(e) =>
-                  setSearchTerm(e.target.value)
-                }
+                onChange={(e) => {
+                  setSearchTerm(e.target.value);
+                  setCurrentPage(1);
+                }}
                 autoFocus
               />
 
@@ -913,7 +1096,21 @@ function App() {
             </div>
 
             <StudentTable
-              students={filteredStudents}
+              students={paginatedStudents}
+              totalFiltered={sortedStudents.length}
+              sortBy={sortBy}
+              sortOrder={sortOrder}
+              onSort={changeSort}
+              pageSize={pageSize}
+              onPageSizeChange={(size) => {
+                setPageSize(size);
+                setCurrentPage(1);
+              }}
+              currentPage={safeCurrentPage}
+              totalPages={totalPages}
+              onPageChange={setCurrentPage}
+              onExportCSV={exportToCSV}
+              onExportExcel={exportToExcel}
               onEdit={handleEditClick}
               onDelete={handleDeleteStudent}
               onAdd={goToAddStudent}
@@ -937,6 +1134,8 @@ function App() {
                   : handleAddStudent
               }
               onCancel={handleCancelForm}
+              formError={formError}
+              isSubmitting={isSubmitting}
             />
 
           )}
@@ -979,6 +1178,17 @@ function PageHeader({ title, subtitle }) {
 
 function StudentTable({
   students,
+  totalFiltered = students.length,
+  sortBy = "id",
+  sortOrder = "asc",
+  onSort = () => {},
+  pageSize = 10,
+  onPageSizeChange = () => {},
+  currentPage = 1,
+  totalPages = 1,
+  onPageChange = () => {},
+  onExportCSV = () => {},
+  onExportExcel = () => {},
   onEdit,
   onDelete,
   onAdd,
@@ -995,18 +1205,37 @@ function StudentTable({
           </h2>
 
           <p>
-            {students.length} student
-            {students.length !== 1 ? "s" : ""} found
+            {totalFiltered} student
+            {totalFiltered !== 1 ? "s" : ""} found
           </p>
 
         </div>
 
-        <button
-          className="add-button"
-          onClick={onAdd}
-        >
-          + Add Student
-        </button>
+        <div className="table-header-actions">
+          <button
+            type="button"
+            className="export-button"
+            onClick={onExportCSV}
+            disabled={students.length === 0}
+          >
+            Export CSV
+          </button>
+          <button
+            type="button"
+            className="export-button"
+            onClick={onExportExcel}
+            disabled={students.length === 0}
+          >
+            Export Excel
+          </button>
+          <button
+            type="button"
+            className="add-button"
+            onClick={onAdd}
+          >
+            + Add Student
+          </button>
+        </div>
 
       </div>
 
@@ -1046,27 +1275,63 @@ function StudentTable({
               <tr>
 
                 <th>
-                  ID
+                  <button
+                    type="button"
+                    className="sort-header"
+                    onClick={() => onSort("id")}
+                  >
+                    ID {sortBy === "id" ? (sortOrder === "asc" ? "↑" : "↓") : "↕"}
+                  </button>
                 </th>
 
                 <th>
-                  Student
+                  <button
+                    type="button"
+                    className="sort-header"
+                    onClick={() => onSort("name")}
+                  >
+                    Student {sortBy === "name" ? (sortOrder === "asc" ? "↑" : "↓") : "↕"}
+                  </button>
                 </th>
 
                 <th>
-                  Email
+                  <button
+                    type="button"
+                    className="sort-header"
+                    onClick={() => onSort("email")}
+                  >
+                    Email {sortBy === "email" ? (sortOrder === "asc" ? "↑" : "↓") : "↕"}
+                  </button>
                 </th>
 
                 <th>
-                  Course
+                  <button
+                    type="button"
+                    className="sort-header"
+                    onClick={() => onSort("course")}
+                  >
+                    Course {sortBy === "course" ? (sortOrder === "asc" ? "↑" : "↓") : "↕"}
+                  </button>
                 </th>
 
                 <th>
-                  Age
+                  <button
+                    type="button"
+                    className="sort-header"
+                    onClick={() => onSort("age")}
+                  >
+                    Age {sortBy === "age" ? (sortOrder === "asc" ? "↑" : "↓") : "↕"}
+                  </button>
                 </th>
 
                 <th>
-                  Marks
+                  <button
+                    type="button"
+                    className="sort-header"
+                    onClick={() => onSort("marks")}
+                  >
+                    Marks {sortBy === "marks" ? (sortOrder === "asc" ? "↑" : "↓") : "↕"}
+                  </button>
                 </th>
 
                 <th>
@@ -1184,8 +1449,40 @@ function StudentTable({
           </table>
 
         </div>
+        )}
 
-      )}
+        <div className="pagination-controls">
+          <div className="page-size-control">
+            <label htmlFor="student-page-size">Rows per page:</label>
+            <select
+              id="student-page-size"
+              value={pageSize}
+              onChange={(e) => onPageSizeChange(Number(e.target.value))}
+            >
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+            </select>
+          </div>
+
+          <div className="pagination-navigation">
+            <span>Page {currentPage} of {totalPages}</span>
+            <button
+              type="button"
+              onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+              disabled={currentPage <= 1}
+            >
+              Previous
+            </button>
+            <button
+              type="button"
+              onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+              disabled={currentPage >= totalPages}
+            >
+              Next
+            </button>
+          </div>
+        </div>
 
     </div>
   );
@@ -1202,6 +1499,8 @@ function StudentForm({
   onChange,
   onSubmit,
   onCancel,
+  formError = "",
+  isSubmitting = false,
 }) {
   return (
     <div className="form-page">
@@ -1242,6 +1541,8 @@ function StudentForm({
                 type="text"
                 name="name"
                 placeholder="Enter student name"
+                maxLength={100}
+                autoComplete="name"
                 value={formData.name}
                 onChange={onChange}
                 required
@@ -1259,6 +1560,8 @@ function StudentForm({
                 type="email"
                 name="email"
                 placeholder="Enter email address"
+                maxLength={254}
+                autoComplete="email"
                 value={formData.email}
                 onChange={onChange}
                 required
@@ -1352,12 +1655,19 @@ function StudentForm({
 
           </div>
 
+          {formError && (
+            <div className="error-message" role="alert" aria-live="polite">
+              {formError}
+            </div>
+          )}
+
           <div className="form-actions">
 
             <button
               type="button"
               className="cancel-button"
               onClick={onCancel}
+              disabled={isSubmitting}
             >
               Cancel
             </button>
@@ -1365,10 +1675,13 @@ function StudentForm({
             <button
               type="submit"
               className="save-button"
+              disabled={isSubmitting}
             >
-              {editingStudent
-                ? "Update Student"
-                : "Save Student"}
+              {isSubmitting
+                ? "Saving..."
+                : editingStudent
+                  ? "Update Student"
+                  : "Save Student"}
             </button>
 
           </div>
