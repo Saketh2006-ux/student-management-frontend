@@ -23,6 +23,8 @@ function App() {
   // =========================
 
   const [students, setStudents] = useState([]);
+  const [selectedStudentIds, setSelectedStudentIds] = useState([]);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [error, setError] = useState("");
 
   // =========================
@@ -73,6 +75,7 @@ function App() {
       })
       .then((data) => {
         setStudents(data);
+        setSelectedStudentIds((selected) => selected.filter((id) => data.some((student) => String(student.id) === String(id))));
         setError("");
       })
       .catch(() => {
@@ -205,11 +208,11 @@ function App() {
 
     if (!name) return "Please enter the student's name.";
     if (name.length < 2) return "Name must contain at least 2 characters.";
-    if (!/^[\\p{L}][\\p{L} .'-]*$/u.test(name)) {
+    if (!/^[\p{L}][\p{L} .'-]*$/u.test(name)) {
       return "Name may contain letters, spaces, apostrophes, periods, or hyphens.";
     }
     if (!email) return "Please enter an email address.";
-    if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email)) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
       return "Please enter a valid email address.";
     }
     if (!course) return "Please select a course.";
@@ -369,6 +372,61 @@ function App() {
   };
 
   // =========================
+  // BULK DELETE STUDENTS
+  // =========================
+
+  const handleBulkDeleteStudents = async () => {
+    if (selectedStudentIds.length === 0 || isBulkDeleting) return;
+
+    const confirmed = window.confirm(
+      `Are you sure you want to permanently delete ${selectedStudentIds.length} selected student${selectedStudentIds.length === 1 ? "" : "s"}?`
+    );
+    if (!confirmed) return;
+
+    setIsBulkDeleting(true);
+    const failedIds = [];
+
+    try {
+      for (const id of selectedStudentIds) {
+        try {
+          const response = await fetch(`${API_URL}/${id}`, { method: "DELETE" });
+          if (!response.ok) failedIds.push(id);
+        } catch {
+          failedIds.push(id);
+        }
+      }
+
+      const deletedCount = selectedStudentIds.length - failedIds.length;
+      setSelectedStudentIds(failedIds);
+      await loadStudents();
+
+      if (failedIds.length === 0) {
+        alert(`${deletedCount} student${deletedCount === 1 ? "" : "s"} deleted successfully!`);
+      } else {
+        alert(`${deletedCount} student${deletedCount === 1 ? "" : "s"} deleted. ${failedIds.length} could not be deleted. Please try again.`);
+      }
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
+  const toggleStudentSelection = (id) => {
+    setSelectedStudentIds((selected) =>
+      selected.some((selectedId) => String(selectedId) === String(id))
+        ? selected.filter((selectedId) => String(selectedId) !== String(id))
+        : [...selected, id]
+    );
+  };
+
+  const togglePageSelection = (pageStudents, shouldSelect) => {
+    setSelectedStudentIds((selected) => {
+      const pageIds = pageStudents.map((student) => String(student.id));
+      const remaining = selected.filter((id) => !pageIds.includes(String(id)));
+      return shouldSelect ? [...remaining, ...pageStudents.map((student) => student.id)] : remaining;
+    });
+  };
+
+  // =========================
   // CANCEL FORM
   // =========================
 
@@ -464,14 +522,14 @@ function App() {
     const escapeCSV = (value) => {
       const text = String(value ?? "");
       // Prevent spreadsheet formula injection for text fields.
-      const safeText = /^[=+@\\-\\t\\r]/.test(text) ? `'${text}` : text;
+      const safeText = /^[=+@\-\t\r]/.test(text) ? `'${text}` : text;
       return `"${safeText.replace(/"/g, '""')}"`;
     };
     const csv = [
       headers.map(escapeCSV).join(","),
       ...rows.map((row) => headers.map((header) => escapeCSV(row[header])).join(",")),
     ].join("\r\n");
-    const blob = new Blob(["\\uFEFF", csv], {
+    const blob = new Blob(["\uFEFF", csv], {
       type: "text/csv;charset=utf-8;",
     });
     downloadBlob(blob, "student-records.csv");
@@ -1019,6 +1077,11 @@ function App() {
               onExportExcel={exportToExcel}
               onEdit={handleEditClick}
               onDelete={handleDeleteStudent}
+              selectedStudentIds={selectedStudentIds}
+              onToggleStudentSelection={toggleStudentSelection}
+              onTogglePageSelection={togglePageSelection}
+              onBulkDelete={handleBulkDeleteStudents}
+              isBulkDeleting={isBulkDeleting}
               onAdd={goToAddStudent}
             />
           </>
@@ -1051,6 +1114,11 @@ function App() {
               onExportExcel={exportToExcel}
               onEdit={handleEditClick}
               onDelete={handleDeleteStudent}
+              selectedStudentIds={selectedStudentIds}
+              onToggleStudentSelection={toggleStudentSelection}
+              onTogglePageSelection={togglePageSelection}
+              onBulkDelete={handleBulkDeleteStudents}
+              isBulkDeleting={isBulkDeleting}
               onAdd={goToAddStudent}
             />
           </>
@@ -1113,6 +1181,11 @@ function App() {
               onExportExcel={exportToExcel}
               onEdit={handleEditClick}
               onDelete={handleDeleteStudent}
+              selectedStudentIds={selectedStudentIds}
+              onToggleStudentSelection={toggleStudentSelection}
+              onTogglePageSelection={togglePageSelection}
+              onBulkDelete={handleBulkDeleteStudents}
+              isBulkDeleting={isBulkDeleting}
               onAdd={goToAddStudent}
             />
           </>
@@ -1191,6 +1264,11 @@ function StudentTable({
   onExportExcel = () => {},
   onEdit,
   onDelete,
+  selectedStudentIds = [],
+  onToggleStudentSelection = () => {},
+  onTogglePageSelection = () => {},
+  onBulkDelete = () => {},
+  isBulkDeleting = false,
   onAdd,
 }) {
   return (
@@ -1212,6 +1290,16 @@ function StudentTable({
         </div>
 
         <div className="table-header-actions">
+          {selectedStudentIds.length > 0 && (
+            <button
+              type="button"
+              className="bulk-delete-button"
+              onClick={onBulkDelete}
+              disabled={isBulkDeleting}
+            >
+              {isBulkDeleting ? "Deleting..." : `Delete Selected (${selectedStudentIds.length})`}
+            </button>
+          )}
           <button
             type="button"
             className="export-button"
@@ -1273,7 +1361,14 @@ function StudentTable({
             <thead>
 
               <tr>
-
+                <th className="selection-column">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all students on this page"
+                    checked={students.length > 0 && students.every((student) => selectedStudentIds.some((id) => String(id) === String(student.id)))}
+                    onChange={(event) => onTogglePageSelection(students, event.target.checked)}
+                  />
+                </th>
                 <th>
                   <button
                     type="button"
@@ -1350,8 +1445,15 @@ function StudentTable({
 
               {students.map((student) => (
 
-                <tr key={student.id}>
-
+                <tr key={student.id} className={selectedStudentIds.some((id) => String(id) === String(student.id)) ? "selected-student-row" : ""}>
+                  <td className="selection-column">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${student.name}`}
+                      checked={selectedStudentIds.some((id) => String(id) === String(student.id))}
+                      onChange={() => onToggleStudentSelection(student.id)}
+                    />
+                  </td>
                   <td>
                     #{student.id}
                   </td>

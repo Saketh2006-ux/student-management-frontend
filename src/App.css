@@ -1937,3 +1937,53 @@ tbody tr:hover {
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Bulk student selection and deletion */
+.selection-column {
+  width: 42px;
+  text-align: center !important;
+}
+
+.selection-column input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #4f46e5;
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.selected-student-row {
+  background: #f5f7ff;
+}
+
+.bulk-delete-button {
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: #fff1f2;
+  color: #b91c1c;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease;
+}
+
+.bulk-delete-button:hover:not(:disabled) {
+  background: #ffe4e6;
+  border-color: #fda4af;
+}
+
+.bulk-delete-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+@media (max-width: 700px) {
+  .table-header-actions {
+    flex-wrap: wrap;
+  }
+
+  .bulk-delete-button {
+    width: 100%;
+  }
+}
