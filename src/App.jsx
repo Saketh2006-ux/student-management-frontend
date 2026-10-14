@@ -1,6 +1,23 @@
 import { useEffect, useState } from "react";
 import "./App.css";
-const API_URL = "https://student-management-backend-1v2c.onrender.com/api/students";
+const API_BASE_URL = "https://student-management-backend-1v2c.onrender.com/api";
+const API_URL = `${API_BASE_URL}/students`;
+const AUTH_URL = `${API_BASE_URL}/auth`;
+
+const getToken = () =>
+  localStorage.getItem("studentMSToken") ||
+  sessionStorage.getItem("studentMSToken");
+
+const apiFetch = (url, options = {}) => {
+  const token = getToken();
+  return fetch(url, {
+    ...options,
+    headers: {
+      ...(options.headers || {}),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+};
 function App() {
   // =========================
   // LOGIN
@@ -8,15 +25,24 @@ function App() {
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-
+  const [fullName, setFullName] = useState("");
+  const [authMode, setAuthMode] = useState("login");
+  const [authError, setAuthError] = useState("");
+  const [isAuthenticating, setIsAuthenticating] = useState(false);
+  const [teacher, setTeacher] = useState(() => {
+    try {
+      const saved =
+        localStorage.getItem("studentMSTeacher") ||
+        sessionStorage.getItem("studentMSTeacher");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
   const [rememberMe, setRememberMe] = useState(
     localStorage.getItem("studentMSRemember") === "true"
   );
-
-  const [loggedIn, setLoggedIn] = useState(
-    localStorage.getItem("studentMSLoggedIn") === "true" ||
-      sessionStorage.getItem("studentMSLoggedIn") === "true"
-  );
+  const [loggedIn, setLoggedIn] = useState(() => Boolean(getToken()));
 
   // =========================
   // STUDENTS
@@ -65,7 +91,7 @@ function App() {
   // =========================
 
   const loadStudents = () => {
-    fetch(API_URL)
+    apiFetch(API_URL)
       .then((response) => {
         if (!response.ok) {
           throw new Error("Failed to load students");
@@ -78,9 +104,10 @@ function App() {
         setSelectedStudentIds((selected) => selected.filter((id) => data.some((student) => String(student.id) === String(id))));
         setError("");
       })
-      .catch(() => {
+      .catch((err) => {
         setError(
-          "Unable to connect to the backend. Make sure Spring Boot is running."
+          err.message ||
+            "Unable to load students. Please sign in again if your session expired."
         );
       });
   };
@@ -95,20 +122,81 @@ function App() {
   // LOGIN
   // =========================
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
+    if (isAuthenticating) return;
 
-    if (username === "admin" && password === "admin123") {
-      setLoggedIn(true);
+    setAuthError("");
+    setIsAuthenticating(true);
+
+    try {
+      const registering = authMode === "register";
+      const response = await fetch(
+        `${AUTH_URL}/${registering ? "register" : "login"}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            registering
+              ? {
+                  fullName: fullName.trim(),
+                  email: username.trim(),
+                  password,
+                }
+              : { email: username.trim(), password }
+          ),
+        }
+      );
+
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(
+          result.message ||
+            (registering
+              ? "Registration failed. Please check your details."
+              : "Invalid email or password.")
+        );
+      }
+      if (!result.token) {
+        throw new Error("The server did not return an authentication token.");
+      }
+
+      localStorage.removeItem("studentMSLoggedIn");
+      sessionStorage.removeItem("studentMSLoggedIn");
+      localStorage.removeItem("studentMSToken");
+      sessionStorage.removeItem("studentMSToken");
+      localStorage.removeItem("studentMSTeacher");
+      sessionStorage.removeItem("studentMSTeacher");
+
+      const storage = rememberMe ? localStorage : sessionStorage;
+      storage.setItem("studentMSToken", result.token);
+      storage.setItem(
+        "studentMSTeacher",
+        JSON.stringify({
+          id: result.teacherId,
+          fullName: result.fullName,
+          email: result.email,
+        })
+      );
 
       if (rememberMe) {
-        localStorage.setItem("studentMSLoggedIn", "true");
         localStorage.setItem("studentMSRemember", "true");
       } else {
-        sessionStorage.setItem("studentMSLoggedIn", "true");
+        localStorage.removeItem("studentMSRemember");
       }
-    } else {
-      alert("Invalid username or password");
+
+      setTeacher({
+        id: result.teacherId,
+        fullName: result.fullName,
+        email: result.email,
+      });
+      setLoggedIn(true);
+      setPassword("");
+      setAuthError("");
+    } catch (err) {
+      setAuthError(err.message || "Unable to sign in. Please try again.");
+    } finally {
+      setIsAuthenticating(false);
     }
   };
 
@@ -119,13 +207,21 @@ function App() {
   const handleLogout = () => {
     setLoggedIn(false);
 
+    localStorage.removeItem("studentMSToken");
+    sessionStorage.removeItem("studentMSToken");
+    localStorage.removeItem("studentMSTeacher");
+    sessionStorage.removeItem("studentMSTeacher");
     localStorage.removeItem("studentMSLoggedIn");
     localStorage.removeItem("studentMSRemember");
     sessionStorage.removeItem("studentMSLoggedIn");
 
+    setTeacher(null);
     setUsername("");
     setPassword("");
+    setFullName("");
+    setAuthError("");
     setStudents([]);
+    setSelectedStudentIds([]);
     setActivePage("dashboard");
   };
 
@@ -243,7 +339,7 @@ function App() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(API_URL, {
+      const response = await apiFetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -311,7 +407,7 @@ function App() {
     setIsSubmitting(true);
 
     try {
-      const response = await fetch(`${API_URL}/${editingStudent.id}`, {
+      const response = await apiFetch(`${API_URL}/${editingStudent.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -355,7 +451,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`${API_URL}/${id}`, {
+      const response = await apiFetch(`${API_URL}/${id}`, {
         method: "DELETE",
       });
 
@@ -389,7 +485,7 @@ function App() {
     try {
       for (const id of selectedStudentIds) {
         try {
-          const response = await fetch(`${API_URL}/${id}`, { method: "DELETE" });
+          const response = await apiFetch(`${API_URL}/${id}`, { method: "DELETE" });
           if (!response.ok) failedIds.push(id);
         } catch {
           failedIds.push(id);
@@ -591,178 +687,171 @@ function App() {
   // =========================
 
   if (!loggedIn) {
+    const registering = authMode === "register";
+
     return (
       <div className="login-page">
-
         <div className="login-container">
-
           <div className="login-left">
-
             <div className="brand">
-
-              <div className="brand-logo">
-                S
-              </div>
-
-              <span>
-                Student Management System
-              </span>
-
+              <div className="brand-logo">S</div>
+              <span>Student Management System</span>
             </div>
 
             <div className="welcome-content">
-
               <h1>
                 Manage Students.
                 <br />
                 Manage Success.
               </h1>
-
               <p>
-                A centralized platform to manage student records,
-                academic performance, and student information.
+                A centralized platform to manage student records, academic
+                performance, and student information.
               </p>
-
             </div>
 
             <div className="login-footer">
-
-              <span>
-                © 2026 Student Management System
-              </span>
-
-              <span>
-                Secure • Reliable • Simple
-              </span>
-
+              <span>© 2026 Student Management System</span>
+              <span>Secure • Reliable • Simple</span>
             </div>
-
           </div>
 
           <div className="login-right">
-
             <div className="login-form-container">
-
               <div className="mobile-logo">
-                <div className="brand-logo">
-                  S
-                </div>
+                <div className="brand-logo">S</div>
               </div>
 
-              <h2>
-                Welcome back
-              </h2>
-
+              <h2>{registering ? "Create your teacher account" : "Welcome back"}</h2>
               <p className="login-description">
-                Sign in to access your administrator dashboard
+                {registering
+                  ? "Register to manage your own student records"
+                  : "Sign in to access your teacher dashboard"}
               </p>
 
               <form onSubmit={handleLogin}>
+                {registering && (
+                  <div className="input-group">
+                    <label>Full name</label>
+                    <div className="input-wrapper">
+                      <span className="input-icon">👤</span>
+                      <input
+                        type="text"
+                        placeholder="Enter your full name"
+                        value={fullName}
+                        onChange={(e) => setFullName(e.target.value)}
+                        maxLength={100}
+                        autoComplete="name"
+                        required
+                      />
+                    </div>
+                  </div>
+                )}
 
                 <div className="input-group">
-
-                  <label>
-                    Username
-                  </label>
-
+                  <label>Email address</label>
                   <div className="input-wrapper">
-
-                    <span className="input-icon">
-                      👤
-                    </span>
-
+                    <span className="input-icon">✉️</span>
                     <input
-                      type="text"
-                      placeholder="Enter your username"
+                      type="email"
+                      placeholder="Enter your email"
                       value={username}
-                      onChange={(e) =>
-                        setUsername(e.target.value)
-                      }
+                      onChange={(e) => setUsername(e.target.value)}
+                      autoComplete="email"
                       required
                     />
-
                   </div>
-
                 </div>
 
                 <div className="input-group">
-
-                  <label>
-                    Password
-                  </label>
-
+                  <label>Password</label>
                   <div className="input-wrapper">
-
-                    <span className="input-icon">
-                      🔒
-                    </span>
-
+                    <span className="input-icon">🔒</span>
                     <input
                       type="password"
-                      placeholder="Enter your password"
-                      value={password}
-                      onChange={(e) =>
-                        setPassword(e.target.value)
+                      placeholder={
+                        registering ? "At least 8 characters" : "Enter your password"
                       }
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      minLength={registering ? 8 : undefined}
+                      maxLength={72}
+                      autoComplete={registering ? "new-password" : "current-password"}
                       required
                     />
-
                   </div>
-
                 </div>
 
-                <div className="login-options">
+                {!registering && (
+                  <div className="login-options">
+                    <label className="remember-me">
+                      <input
+                        type="checkbox"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                      />
+                      <span>Remember me</span>
+                    </label>
+                    <a href="#forgot-password" onClick={handleForgotPassword}>
+                      Forgot password?
+                    </a>
+                  </div>
+                )}
 
-                  <label className="remember-me">
-
-                    <input
-                      type="checkbox"
-                      checked={rememberMe}
-                      onChange={(e) =>
-                        setRememberMe(e.target.checked)
-                      }
-                    />
-
-                    <span>
-                      Remember me
-                    </span>
-
-                  </label>
-
-                  <a
-                    href="#"
-                    onClick={handleForgotPassword}
-                  >
-                    Forgot password?
-                  </a>
-
-                </div>
+                {authError && (
+                  <div className="error-message" role="alert" aria-live="polite">
+                    {authError}
+                  </div>
+                )}
 
                 <button
                   type="submit"
                   className="login-button"
+                  disabled={isAuthenticating}
                 >
                   <span>
-                    Sign In
+                    {isAuthenticating
+                      ? "Please wait..."
+                      : registering
+                        ? "Create Account"
+                        : "Sign In"}
                   </span>
-
-                  <span>
-                    →
-                  </span>
+                  <span>→</span>
                 </button>
-
               </form>
+
+              <p
+                className="login-description"
+                style={{ marginTop: "18px", textAlign: "center" }}
+              >
+                {registering ? "Already have an account? " : "New teacher? "}
+                <button
+                  type="button"
+                  style={{
+                    border: 0,
+                    background: "transparent",
+                    color: "inherit",
+                    cursor: "pointer",
+                    textDecoration: "underline",
+                    font: "inherit",
+                    padding: 0,
+                  }}
+                  onClick={() => {
+                    setAuthMode(registering ? "login" : "register");
+                    setAuthError("");
+                    setPassword("");
+                  }}
+                >
+                  {registering ? "Sign in" : "Create an account"}
+                </button>
+              </p>
 
               <div className="security-note">
                 🔐 Your connection is protected and secure
               </div>
-
             </div>
-
           </div>
-
         </div>
-
       </div>
     );
   }
@@ -890,13 +979,8 @@ function App() {
 
             <div>
 
-              <strong>
-                Administrator
-              </strong>
-
-              <span>
-                Admin
-              </span>
+              <strong>{teacher?.fullName || "Teacher"}</strong>
+              <span>{teacher?.email || "Teacher account"}</span>
 
             </div>
 
@@ -936,7 +1020,7 @@ function App() {
                 </h1>
 
                 <p>
-                  Welcome back, Admin!
+                  Welcome back, {teacher?.fullName || "Teacher"}!
                 </p>
 
               </div>
@@ -949,13 +1033,8 @@ function App() {
 
                 <div>
 
-                  <strong>
-                    Administrator
-                  </strong>
-
-                  <small>
-                    Admin
-                  </small>
+                  <strong>{teacher?.fullName || "Teacher"}</strong>
+                  <small>{teacher?.email || "Teacher account"}</small>
 
                 </div>
 
